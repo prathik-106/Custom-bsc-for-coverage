@@ -1,244 +1,306 @@
-# BSC Branch/Rule/Method Coverage Instrumentation Guide
+# BSC Branch / Rule / Method Coverage Instrumentation
 
-This guide explains every step required to build an instrumented
-Bluespec compiler, generate instrumented Verilog, run a simulation, and
-produce a coverage report.
+## Overview
 
-## End-to-end workflow
+This repository extends the **Bluespec Compiler (BSC)** with
+compile-time instrumentation for **Branch**, **Rule**, and **Method**
+coverage. It also includes utilities to process simulation logs and
+generate detailed coverage reports.
 
-1.  Install instrumentation files.
-2.  Rebuild `bsc`.
-3.  Verify the new compiler.
-4.  Compile your Bluespec design to Verilog.
-5.  Verify probes were inserted.
-6.  Build the simulator.
-7.  Run the simulator and save the log.
-8.  Generate the coverage report.
-9.  Review Branch/Rule/Method coverage.
+The workflow consists of the following steps:
+
+1.  Install the instrumentation files.
+2.  Rebuild the Bluespec compiler.
+3.  Verify the instrumented compiler.
+4.  Generate instrumented Verilog.
+5.  Verify that probes were inserted.
+6.  Build and run the simulator.
+7.  Generate the coverage report.
+8.  Review the coverage results.
 
 ------------------------------------------------------------------------
 
-## Prerequisites
+# Prerequisites
+
+Before using the instrumentation, ensure that you have:
 
 -   A working checkout of the Bluespec Compiler (BSC).
--   A successful normal BSC build before adding instrumentation.
--   Python 3 available.
--   A simulator (Verilator, VCS, or another supported simulator).
+-   Successfully built the original BSC at least once.
+-   Python 3 installed.
+-   A supported simulator (Verilator, VCS, etc.).
 
 ------------------------------------------------------------------------
 
-# BSC Branch/Rule/Method Coverage Instrumentation
-
-This adds compile-time coverage instrumentation to `bsc` (the Bluespec
-compiler), plus a script to turn simulation logs into a coverage report.
-
-## What's new
-
-Three files:
+# Repository Contents
 
   ------------------------------------------------------------------------------------
-  File                    Where it goes                  What it does
-  ----------------------- ------------------------------ -----------------------------
-  `ICoverage.hs`          `bsc/src/comp/ICoverage.hs`    New compiler pass. Walks
-                                                         every rule body and every
-                                                         `Action`/`ActionValue`
-                                                         interface method body and
-                                                         inserts a
-                                                         `$display("PROBE_<n>_...")`
-                                                         at each reachable decision
-                                                         point.
+  File                     Destination                    Description
+  ------------------------ ------------------------------ ----------------------------
+  **ICoverage.hs**         `bsc/src/comp/ICoverage.hs`    Compiler pass that inserts
+                                                          Branch, Rule, and Method
+                                                          coverage probes.
 
-  `VProbeOnce.hs`         `bsc/src/comp/VProbeOnce.hs`   Post-processes the generated
-                                                         Verilog text so every probe
-                                                         fires **at most once per
-                                                         simulation run** (adds a
-                                                         `probe_fired_N` latch around
-                                                         each `$display`).
+  **VProbeOnce.hs**        `bsc/src/comp/VProbeOnce.hs`   Post-processes generated
+                                                          Verilog so that each probe
+                                                          is printed only once per
+                                                          simulation.
 
-  `bsc.hs`                `bsc/src/comp/bsc.hs`          Replace the already existing
-                                                         bsc.hs with this file.
+  **bsc.hs**               `bsc/src/comp/bsc.hs`          Modified compiler driver
+                                                          that integrates the
+                                                          instrumentation passes.
 
-  `coverage_report.py`    anywhere (run from your shell) Diffs "probes inserted into
-                                                         the generated Verilog"
-                                                         against "probes that actually
-                                                         fired in a sim log" and
-                                                         prints/writes a coverage
-                                                         report.
+  **coverage_report.py**   Anywhere                       Generates coverage reports
+                                                          by comparing inserted probes
+                                                          with simulation logs.
   ------------------------------------------------------------------------------------
 
-### What gets instrumented
+------------------------------------------------------------------------
 
-For every rule and every fireable interface method, `ICoverage.hs`
-inserts:
+# Instrumentation Overview
 
--   **Branch probes** --- one per `if`/`else`/`case`-arm and per ternary
-    (`_then`, `_else`, `_tern_true`, `_tern_false`).
--   **Rule-fired probes** (`_RULE_FIRED`) --- fires only on cycles the
-    rule actually commits (it's joined onto the rule body the same way
-    the branch probes are, so it inherits the "only counts if scheduled
-    to fire" semantics for free).
--   **Method-fired probes** (`_METHOD_FIRED`) --- same idea, for
-    methods.
+The instrumentation inserts three categories of probes.
 
-Each probe is globally unique *within its source file* (numbering resets
-per `.bsv`/`.bs` compilation unit), and every probe label is prefixed
-with its source file, e.g.:
+## Branch Probes
 
-    $display("src/stage3.bsv:PROBE_30_RL_foo_L142_then");
+Inserted for:
 
-`VProbeOnce.hs` then rewrites that into a self-latching form so it
-prints once instead of flooding your log every cycle the branch is
-re-taken:
+-   Every `if` / `else`
+-   Every `case` arm
+-   Every ternary operator (`?:`)
+
+Example:
 
 ``` verilog
-if (!probe_fired_30) begin
-    $display("src/stage3.bsv:PROBE_30_RL_foo_L142_then");
-    probe_fired_30 <= 1;
-end
+$display("src/stage3.bsv:PROBE_30_RL_foo_L142_then");
 ```
 
-## Building bsc with the instrumentation
+## Rule-Fired Probes
 
-1.  Copy the new files into your `bsc` checkout:
+Inserted into every rule body and fire only when the rule successfully
+commits.
 
-    ``` bash
-    cp ICoverage.hs   ~/Downloads/bsc/src/comp/ICoverage.hs
-    cp VProbeOnce.hs  ~/Downloads/bsc/src/comp/VProbeOnce.hs
-    cp bsc.hs         ~/Downloads/bsc/src/comp/bsc.hs
-    ```
+## Method-Fired Probes
 
-    (adjust `~/Downloads/bsc` if your checkout lives elsewhere).
+Inserted into every fireable Action and ActionValue interface method and
+fire only when the method executes.
 
-2.  Apply the `bsc.hs` changes (either copy the provided `bsc.hs` over
-    the existing one, as above, or apply just the diff --- both the
-    import lines and the two pipeline hook-ins are called out in the
-    comments at the bottom of `ICoverage.hs` and the top of
-    `VProbeOnce.hs` if you'd rather patch by hand):
+Each probe is unique within its source file.
 
-    -   `iInstrumentCoverage` runs right after `iSplitIf` and before
-        `iLift`.
-    -   `instrumentProbeOnce` runs on the final Verilog string, right
-        before it's written to disk.
+------------------------------------------------------------------------
 
-3.  Rebuild `bsc` **from `src/comp`, not the repo root**:
+# Installing the Instrumentation
 
-    ``` bash
-    cd ~/Downloads/bsc/src/comp
-    sudo make bsc
-    ```
+Copy the instrumentation files into your BSC source tree.
 
-    Every time you change any of `ICoverage.hs` / `VProbeOnce.hs` /
-    `bsc.hs`, re-run the `cp` step for that file *before* rebuilding ---
-    `make bsc` picks up whatever's already sitting in `src/comp`, it
-    won't pull from wherever you keep your working copies:
+``` bash
+cp ICoverage.hs  <BSC_ROOT>/src/comp/
+cp VProbeOnce.hs <BSC_ROOT>/src/comp/
+cp bsc.hs        <BSC_ROOT>/src/comp/
+```
 
-    ``` bash
-    cp ICoverage.hs ~/Downloads/bsc/src/comp/ICoverage.hs && \
-    cd ~/Downloads/bsc/src/comp && make bsc
-    ```
+The modified `bsc.hs` integrates the instrumentation pipeline:
 
-## Running an instrumented build
+-   `iInstrumentCoverage` executes after `iSplitIf` and before `iLift`.
+-   `instrumentProbeOnce` executes immediately before the generated
+    Verilog is written.
 
-Nothing changes about how you invoke `bsc` or your simulator --- the
-instrumented compiler just emits extra `$display` lines. Practically:
+Whenever any instrumentation source file is modified, copy the updated
+file into the BSC source tree before rebuilding.
 
-1.  Build your design's Verilog with the instrumented `bsc`. This is
-    what plants the `PROBE_` calls in `build/hw/verilog/*.v`.
+------------------------------------------------------------------------
 
-2.  Run your simulation(s) as normal (Verilator, VCS, whatever), making
-    sure `$display` output is going somewhere you can grab --- redirect
-    stdout to a log file, e.g.:
+# Building the Instrumented Compiler
 
-    ``` bash
-    ./your_sim_binary > /tmp/sim_output.log
-    ```
+From the BSC source directory:
 
-    Any probes that fire will show up as plain lines in that log.
+``` bash
+cd <BSC_ROOT>/src/comp
+make bsc
+```
 
-## Generating a coverage report
+Ensure the compiler completes successfully before proceeding.
 
-Once you have (a) the generated Verilog directory and (b) one or more
-simulation log files, run:
+------------------------------------------------------------------------
+
+# Verifying the Compiler
+
+Confirm that the newly built compiler is the one you intend to use
+before compiling your design.
+
+------------------------------------------------------------------------
+
+# Generating Instrumented Verilog
+
+Compile your Bluespec design exactly as you normally would.
+
+The instrumented compiler behaves identically to the original compiler
+except that it inserts additional probe `$display` statements into the
+generated Verilog.
+
+------------------------------------------------------------------------
+
+# Verifying Probe Insertion
+
+After generating Verilog, verify that probes were inserted.
+
+``` bash
+grep -R "PROBE_" build/hw/verilog
+```
+
+If instrumentation is working correctly, the generated Verilog will
+contain probe `$display` statements.
+
+------------------------------------------------------------------------
+
+# Running the Simulation
+
+Build your simulator exactly as you normally would.
+
+Run the simulation while saving the output to a log file.
+
+``` bash
+./your_sim_binary > simulation.log
+```
+
+If probes execute successfully, the log will contain entries similar to:
+
+``` text
+src/stage3.bsv:PROBE_30_RL_foo_L142_then
+src/stage3.bsv:PROBE_44_METHOD_FIRED
+```
+
+------------------------------------------------------------------------
+
+# Generating the Coverage Report
+
+After simulation, generate the coverage report.
 
 ``` bash
 python3 coverage_report.py \
     --verilog-dir build/hw/verilog \
-    --sim-log /tmp/sim_output.log
+    --sim-log simulation.log
 ```
 
-That's the minimal invocation. Useful variations:
+Useful options:
 
--   **Multiple test runs, aggregated together** --- pass `--sim-log`
-    multiple times; results are unioned so you get coverage across an
-    entire regression suite, not just one run:
+### Multiple simulation logs
 
-    ``` bash
-    python3 coverage_report.py \
-        --verilog-dir build/hw/verilog \
-        --sim-log /tmp/test1.log \
-        --sim-log /tmp/test2.log \
-        --sim-log /tmp/test3.log
-    ```
+``` bash
+python3 coverage_report.py \
+    --verilog-dir build/hw/verilog \
+    --sim-log test1.log \
+    --sim-log test2.log \
+    --sim-log test3.log
+```
 
--   **Just one source file** --- filter by substring:
+### Report a single source file
 
-    ``` bash
-    python3 coverage_report.py --verilog-dir build/hw/verilog \
-        --sim-log /tmp/sim_output.log --file stage3.bsv
-    ```
+``` bash
+python3 coverage_report.py \
+    --verilog-dir build/hw/verilog \
+    --sim-log simulation.log \
+    --file stage3.bsv
+```
 
--   **See what's still missing**:
+### Show uncovered probes
 
-    ``` bash
-    python3 coverage_report.py --verilog-dir build/hw/verilog \
-        --sim-log /tmp/sim_output.log --show-missing
-    ```
+``` bash
+python3 coverage_report.py \
+    --verilog-dir build/hw/verilog \
+    --sim-log simulation.log \
+    --show-missing
+```
 
--   **See every single probe with FIRED/MISSED status**:
+### Show all probes
 
-    ``` bash
-    python3 coverage_report.py --verilog-dir build/hw/verilog \
-        --sim-log /tmp/sim_output.log --show-all
-    ```
+``` bash
+python3 coverage_report.py \
+    --verilog-dir build/hw/verilog \
+    --sim-log simulation.log \
+    --show-all
+```
 
--   **Also get a CSV** (per-file, per-bucket summary, handy for
-    spreadsheets/CI):
+### Export CSV
 
-    ``` bash
-    python3 coverage_report.py --verilog-dir build/hw/verilog \
-        --sim-log /tmp/sim_output.log --csv coverage.csv
-    ```
+``` bash
+python3 coverage_report.py \
+    --verilog-dir build/hw/verilog \
+    --sim-log simulation.log \
+    --csv coverage.csv
+```
 
-### What the report looks like
+------------------------------------------------------------------------
 
-For each source file, it prints three separate sections in order ---
-**Branches**, **Rules**, **Methods** --- each with its own
-fired/inserted count and percentage (these are deliberately never
-averaged together, since "did this branch get taken" and "did this rule
-ever commit" are different questions). Anything that doesn't match a
-known probe suffix is bucketed as **Other** rather than silently
-dropped. A grand total across all files closes out the report.
+# Coverage Report
 
-By default the script also writes a Markdown copy of the same report to
-`~/Downloads/coverage_report.md` (change the destination with
-`--md-out <path>`, or skip it with `--no-md`).
+For each source file, the report contains:
 
-## A couple of things worth knowing
+-   Branch Coverage
+-   Rule Coverage
+-   Method Coverage
 
--   Probe numbers are **per source file**, not global --- the same
-    number means different things in `stage3.bsv` vs. `mkSoC.bsv`. The
-    report script always keys on `(source_file, label)`, never on the
-    bare number, so this is handled correctly for you; just don't try to
-    compare raw `PROBE_N` numbers across files yourself.
--   BSC standard-library files use the `.bs` extension (no trailing `v`)
-    --- e.g. `GetPut.bs`, `Connectable.bs`. Both the instrumentation
-    pass and the report script handle `.bs` and `.bsv` alike, so probes
-    coming from stdlib code you depend on (via inlined rules/methods)
-    will show up as their own section too.
--   Coverage for rules/methods that call `noinline` functions is not
-    currently reliable --- treat any coverage numbers touching those
-    paths as suspect until this is fixed.# BSC Branch/Rule/Method
-    Coverage Instrumentation
+Each section reports:
 
-This adds compile-time coverage instrumentation to `bsc` (the Bluespec
-compiler), plus a script to turn simulation logs into a coverage report.
+-   Number of inserted probes
+-   Number of fired probes
+-   Coverage percentage
+
+A grand summary across all source files is also produced.
+
+By default, a Markdown version of the report is written to:
+
+``` text
+~/Downloads/coverage_report.md
+```
+
+The destination can be changed using:
+
+``` bash
+--md-out <path>
+```
+
+or disabled with:
+
+``` bash
+--no-md
+```
+
+------------------------------------------------------------------------
+
+# Notes and Limitations
+
+-   Probe numbering is unique only within each source file.
+-   Standard library `.bs` files are also instrumented when applicable.
+-   Coverage for rules or methods involving `noinline` functions is
+    currently not fully reliable.
+
+------------------------------------------------------------------------
+
+# Troubleshooting
+
+  -----------------------------------------------------------------------
+  Problem                   Possible Cause
+  ------------------------- ---------------------------------------------
+  No `PROBE_` strings in    Instrumentation was not installed correctly
+  generated Verilog         or BSC was not rebuilt.
+
+  No probe messages during  Simulator was built using stale Verilog or
+  simulation                the wrong compiler output.
+
+  Empty coverage report     The simulation log does not correspond to the
+                            generated Verilog directory.
+  -----------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Complete Workflow
+
+1.  Install the instrumentation files.
+2.  Rebuild BSC.
+3.  Verify the compiler.
+4.  Generate instrumented Verilog.
+5.  Verify probe insertion.
+6.  Build the simulator.
+7.  Run the simulation.
+8.  Generate the coverage report.
+9.  Review the Branch, Rule, and Method coverage results.
