@@ -66,7 +66,7 @@ end
 3. Rebuild `bsc` **from `src/comp`, not the repo root**:
    ```bash
    cd ~/Downloads/bsc/src/comp
-   make bsc
+   sudo make bsc
    ```
    Every time you change any of `ICoverage.hs` / `VProbeOnce.hs` /
    `bsc.hs`, re-run the `cp` step for that file *before* rebuilding —
