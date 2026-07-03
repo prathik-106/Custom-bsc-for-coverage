@@ -31,7 +31,7 @@ resets per `.bsv`/`.bs` compilation unit), and every probe label is
 prefixed with its source file, e.g.:
 
 ```
-$display("src/stage3.bsv:PROBE_30_RL_foo_L142_then (s03 == 0)");
+$display("src/stage3.bsv:PROBE_30_RL_foo_L142_then");
 ```
 
 `VProbeOnce.hs` then rewrites that into a self-latching form so it
