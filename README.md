@@ -40,7 +40,7 @@ re-taken:
 
 ```verilog
 if (!probe_fired_30) begin
-    $display("src/stage3.bsv:PROBE_30_RL_foo_L142_then (s03 == 0)");
+    $display("src/stage3.bsv:PROBE_30_RL_foo_L142_then");
     probe_fired_30 <= 1;
 end
 ```
@@ -153,10 +153,4 @@ to `~/Downloads/coverage_report.md` (change the destination with
 - Coverage for rules/methods that call `noinline` functions is not
   currently reliable — treat any coverage numbers touching those paths
   as suspect until this is fixed.
-- Condition text in branch labels (e.g. `(s03 == 0)`) is a
-  **compile-time description** of the condition's structure, not a
-  runtime-evaluated value — this is intentional, since a runtime
-  read would get constant-folded away by the Verilog backend for
-  most derived comparisons. Known limitation: an all-ones literal
-  (`'1`) can render as a large pre-sizing integer rather than the
-  final N-bit constant, since this pass runs before sizing.
+
