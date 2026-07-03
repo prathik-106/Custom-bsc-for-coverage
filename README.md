@@ -11,7 +11,7 @@ Three files:
 |---|---|---|
 | `ICoverage.hs` | `bsc/src/comp/ICoverage.hs` | New compiler pass. Walks every rule body and every `Action`/`ActionValue` interface method body and inserts a `$display("PROBE_<n>_...")` at each reachable decision point. |
 | `VProbeOnce.hs` | `bsc/src/comp/VProbeOnce.hs` | Post-processes the generated Verilog text so every probe fires **at most once per simulation run** (adds a `probe_fired_N` latch around each `$display`). |
-| `bsc.hs` | `bsc/src/comp/bsc.hs` | Wires the two passes above into the compiler pipeline (see "Building" below). |
+| `bsc.hs` | `bsc/src/comp/bsc.hs` | Replace the already existing bsc.hs with this file. |
 | `coverage_report.py` | anywhere (run from your shell) | Diffs "probes inserted into the generated Verilog" against "probes that actually fired in a sim log" and prints/writes a coverage report. |
 
 ### What gets instrumented
