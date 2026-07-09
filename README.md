@@ -194,14 +194,38 @@ verilator --binary -j 0 \
 
 -   `--trace` is only needed if your testbench calls `$dumpvars` and
     you want a VCD for waveform viewing.
--   For larger designs, bsc may reference Verilog primitives
-    (`RegN`, `FIFO2`, etc.) that live in BSC's own Verilog library
-    rather than being inlined into your generated file. If Verilator
-    reports `Cannot find file containing module: <Prim>`, add:
 
-    ``` bash
-    -I$BLUESPECDIR/Verilog $BLUESPECDIR/Verilog/*.v
-    ```
+**If Verilator fails with an error like:**
+
+``` text
+%Error: Cannot find file containing module: 'RegN'
+```
+
+it means `mkExample.v` instantiates a BSC Verilog primitive
+(`RegN`, `FIFO2`, etc.) that wasn't inlined into the file and instead
+needs to be linked in from BSC's own Verilog library. Find that
+library on your machine first:
+
+``` bash
+echo $BLUESPECDIR                     # check if it's already set
+find / -iname "RegN.v" 2>/dev/null    # otherwise locate it manually
+```
+
+Then re-run the same Verilator command, but also point `-I` at that
+directory and add all of its `.v` files to the file list:
+
+``` bash
+verilator --binary -j 0 \
+  -I$BLUESPECDIR/Verilog \
+  --top-module tb_example \
+  tb_example.v mkExample.v $BLUESPECDIR/Verilog/*.v \
+  -o sim_example \
+  --trace
+```
+
+For the small example design in this repo you likely won't hit this —
+`mkExample.v` compiles standalone. It tends to become relevant on
+larger, real-world designs that use more BSC library modules.
 
     to the command above.
 
