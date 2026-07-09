@@ -143,7 +143,7 @@ make sure your `PATH` points at the instrumented one before continuing.
 
 ------------------------------------------------------------------------
 
-# Worked Example: Generating Verilog, Building (Verilator example), and Running
+## Worked Example: Generating Verilog, Building, and Running
 
 This section walks through the full pipeline end-to-end on the small
 example design in `examples/` (`ExampleDesign.bsv` + `tb_example.v`),
@@ -151,9 +151,12 @@ so you can confirm your setup works before pointing it at a real
 design.
 
 All commands below assume you're in the directory containing
-`ExampleDesign.bsv` and `tb_example.v`.
+`ExampleDesign.bsv` and `tb_example.v`. The build/run steps use
+Verilator as the simulator, since it's free and simple to set up — any
+other supported simulator (VCS, Questa, etc.) works the same way, just
+swap out that one step.
 
-### 1. Generate instrumented Verilog from the BSV source
+### Step 1 — Generate instrumented Verilog from the BSV source
 
 ``` bash
 bsc -verilog ExampleDesign.bsv
@@ -167,7 +170,7 @@ inserts probe `$display` statements into the generated Verilog.
 > if a file defines more than one. It's not needed here since
 > `mkExample` is the only synthesize boundary in `ExampleDesign.bsv`.
 
-### 2. Verify probes were inserted
+### Step 2 — Verify probes were inserted
 
 ``` bash
 grep "PROBE_" mkExample.v
@@ -182,11 +185,7 @@ $display("ExampleDesign.bsv:PROBE_0_mkExample_RL_process_data_L18_tern_true (dat
 If nothing shows up, the compiler you invoked isn't the instrumented
 build — recheck the "Verifying the Compiler" step above.
 
-### 3. Build the simulator (example: Verilator)
-
-Verilator is used here as an example simulator — any supported
-simulator (VCS, Questa, etc.) works the same way once you have
-`mkExample.v` and your testbench; only the build command changes.
+### Step 3 — Build the simulator
 
 ``` bash
 verilator --binary -j 0 \
@@ -231,9 +230,7 @@ For the small example design in this repo you likely won't hit this —
 `mkExample.v` compiles standalone. It tends to become relevant on
 larger, real-world designs that use more BSC library modules.
 
-    to the command above.
-
-### 4. Run the simulation and capture the log
+### Step 4 — Run the simulation and capture the log
 
 ``` bash
 ./obj_dir/sim_example > coverage.log
@@ -247,7 +244,7 @@ ExampleDesign.bsv:PROBE_15_mkExample_RL_process_data_L18_RULE_FIRED
 ExampleDesign.bsv:PROBE_17_mkExample_put_METHOD_FIRED
 ```
 
-### 5. Generate the coverage report
+### Step 5 — Generate the coverage report
 
 ``` bash
 python3 coverage_report.py \
