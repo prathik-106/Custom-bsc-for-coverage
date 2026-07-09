@@ -27,7 +27,8 @@ Before using the instrumentation, ensure that you have:
 -   A working checkout of the Bluespec Compiler (BSC).
 -   Successfully built the original BSC at least once.
 -   Python 3 installed.
--   A supported simulator (Verilator, VCS, etc.).
+-   [Verilator](https://verilator.org/) installed (or another supported
+    simulator, e.g. VCS).
 
 ------------------------------------------------------------------------
 
@@ -52,6 +53,11 @@ Before using the instrumentation, ensure that you have:
   **coverage_report.py**   Anywhere                       Generates coverage reports
                                                           by comparing inserted probes
                                                           with simulation logs.
+
+  **examples/**            Anywhere                       A small worked example
+                                                          (`ExampleDesign.bsv` +
+                                                          testbench) to sanity-check
+                                                          your setup end-to-end.
   ------------------------------------------------------------------------------------
 
 ------------------------------------------------------------------------
@@ -127,53 +133,137 @@ Ensure the compiler completes successfully before proceeding.
 Confirm that the newly built compiler is the one you intend to use
 before compiling your design.
 
-------------------------------------------------------------------------
+``` bash
+which bsc
+bsc -verilog -v      # sanity-check it runs
+```
 
-# Generating Instrumented Verilog
-
-Compile your Bluespec design exactly as you normally would.
-
-The instrumented compiler behaves identically to the original compiler
-except that it inserts additional probe `$display` statements into the
-generated Verilog.
+If you have both a stock BSC and an instrumented build on your machine,
+make sure your `PATH` points at the instrumented one before continuing.
 
 ------------------------------------------------------------------------
 
-# Verifying Probe Insertion
+# Worked Example: Generating Verilog, Building, and Running
 
-After generating Verilog, verify that probes were inserted.
+This section walks through the full pipeline end-to-end on the small
+example design in `examples/` (`ExampleDesign.bsv` + `tb_example.v`),
+so you can confirm your setup works before pointing it at a real
+design.
+
+All commands below assume you're in the directory containing
+`ExampleDesign.bsv` and `tb_example.v`.
+
+### 1. Generate instrumented Verilog from the BSV source
+
+``` bash
+bsc -verilog ExampleDesign.bsv
+```
+
+This produces `mkExample.v` in the current directory. The instrumented
+compiler behaves identically to the stock compiler except that it also
+inserts probe `$display` statements into the generated Verilog.
+
+> `-g <module>` can be used to pick a specific `(*synthesize*)` module
+> if a file defines more than one. It's not needed here since
+> `mkExample` is the only synthesize boundary in `ExampleDesign.bsv`.
+
+### 2. Verify probes were inserted
+
+``` bash
+grep "PROBE_" mkExample.v
+```
+
+You should see lines like:
+
+``` text
+$display("ExampleDesign.bsv:PROBE_0_mkExample_RL_process_data_L18_tern_true (data <= 50)");
+```
+
+If nothing shows up, the compiler you invoked isn't the instrumented
+build — recheck the "Verifying the Compiler" step above.
+
+### 3. Build the simulator with Verilator
+
+``` bash
+verilator --binary -j 0 \
+  --top-module tb_example \
+  tb_example.v mkExample.v \
+  -o sim_example \
+  --trace
+```
+
+-   `--trace` is only needed if your testbench calls `$dumpvars` and
+    you want a VCD for waveform viewing.
+-   For larger designs, bsc may reference Verilog primitives
+    (`RegN`, `FIFO2`, etc.) that live in BSC's own Verilog library
+    rather than being inlined into your generated file. If Verilator
+    reports `Cannot find file containing module: <Prim>`, add:
+
+    ``` bash
+    -I$BLUESPECDIR/Verilog $BLUESPECDIR/Verilog/*.v
+    ```
+
+    to the command above.
+
+### 4. Run the simulation and capture the log
+
+``` bash
+./obj_dir/sim_example > coverage.log
+```
+
+If probes execute successfully, `coverage.log` will contain entries
+like:
+
+``` text
+ExampleDesign.bsv:PROBE_15_mkExample_RL_process_data_L18_RULE_FIRED
+ExampleDesign.bsv:PROBE_17_mkExample_put_METHOD_FIRED
+```
+
+### 5. Generate the coverage report
+
+``` bash
+python3 coverage_report.py \
+    --verilog-dir mkExample.v \
+    --sim-log coverage.log \
+    --show-missing
+```
+
+`--verilog-dir` accepts either a single `.v` file (as above, for
+quick single-module checks) or a directory to glob `*.v` across (for
+multi-file designs — see the next section).
+
+That's it — you now have a full Branch / Rule / Method coverage report
+for the example design. Apply the same five steps to your own `.bsv`
+sources to get coverage for a real project.
+
+------------------------------------------------------------------------
+
+# Using the Pipeline on Larger, Multi-File Designs
+
+The same five steps apply; the only differences are scale-related.
+
+### Generating Verilog for a full build
+
+Compile your design exactly as you normally would (e.g. via your
+project's existing Makefile/build scripts) — no special flags are
+needed for instrumentation, since it's built into the compiler.
+
+### Verifying probe insertion across a build directory
 
 ``` bash
 grep -R "PROBE_" build/hw/verilog
 ```
 
-If instrumentation is working correctly, the generated Verilog will
-contain probe `$display` statements.
+### Running the simulation
 
-------------------------------------------------------------------------
-
-# Running the Simulation
-
-Build your simulator exactly as you normally would.
-
-Run the simulation while saving the output to a log file.
+Build your simulator exactly as you normally would, and save the
+output to a log file:
 
 ``` bash
 ./your_sim_binary > simulation.log
 ```
 
-If probes execute successfully, the log will contain entries similar to:
-
-``` text
-src/stage3.bsv:PROBE_30_RL_foo_L142_then
-src/stage3.bsv:PROBE_44_METHOD_FIRED
-```
-
-------------------------------------------------------------------------
-
-# Generating the Coverage Report
-
-After simulation, generate the coverage report.
+### Generating the report against a whole directory
 
 ``` bash
 python3 coverage_report.py \
@@ -193,7 +283,7 @@ python3 coverage_report.py \
     --sim-log test3.log
 ```
 
-### Report a single source file
+### Report a single source file (within a multi-file build dir)
 
 ``` bash
 python3 coverage_report.py \
@@ -282,13 +372,19 @@ or disabled with:
   Problem                   Possible Cause
   ------------------------- ---------------------------------------------
   No `PROBE_` strings in    Instrumentation was not installed correctly
-  generated Verilog         or BSC was not rebuilt.
+  generated Verilog         or BSC was not rebuilt, or `bsc` on `PATH`
+                            is the stock (non-instrumented) build.
 
   No probe messages during  Simulator was built using stale Verilog or
   simulation                the wrong compiler output.
 
   Empty coverage report     The simulation log does not correspond to the
-                            generated Verilog directory.
+                            generated Verilog directory/file.
+
+  Verilator: "Cannot find    Design references BSC Verilog primitives
+  file containing module"   that weren't inlined. Add
+                            `-I$BLUESPECDIR/Verilog $BLUESPECDIR/Verilog/*.v`
+                            to the Verilator command.
   -----------------------------------------------------------------------
 
 ------------------------------------------------------------------------
@@ -298,9 +394,9 @@ or disabled with:
 1.  Install the instrumentation files.
 2.  Rebuild BSC.
 3.  Verify the compiler.
-4.  Generate instrumented Verilog.
-5.  Verify probe insertion.
-6.  Build the simulator.
-7.  Run the simulation.
-8.  Generate the coverage report.
+4.  Generate instrumented Verilog. `bsc -verilog ExampleDesign.bsv`
+5.  Verify probe insertion. `grep "PROBE_" mkExample.v`
+6.  Build the simulator. `verilator --binary -j 0 --top-module tb_example tb_example.v mkExample.v -o sim_example --trace`
+7.  Run the simulation. `./obj_dir/sim_example > coverage.log`
+8.  Generate the coverage report. `python3 coverage_report.py --verilog-dir mkExample.v --sim-log coverage.log --show-missing`
 9.  Review the Branch, Rule, and Method coverage results.
