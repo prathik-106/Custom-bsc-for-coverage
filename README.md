@@ -257,6 +257,62 @@ python3 coverage_report.py \
 quick single-module checks) or a directory to glob `*.v` across (for
 multi-file designs — see the next section).
 
+#### Sample output
+
+Running the example through the full pipeline (bsc → Verilator →
+`coverage.log` → `coverage_report.py --show-all`) produces a report
+like this:
+
+``` text
+====================================================================================
+ExampleDesign.bsv   (14/19 = 73.7% overall)
+====================================================================================
+-- Branches: 11 / 15 (73.3%) --
+    PROBE_0      FIRED   mkExample_RL_process_data_L18_tern_true
+    PROBE_1      MISSED  mkExample_RL_process_data_L18_tern_false
+    PROBE_2      MISSED  mkExample_RL_process_data_L18_tern_true
+    PROBE_3      FIRED   mkExample_RL_process_data_L18_tern_false
+    PROBE_4      MISSED  mkExample_RL_process_data_L18_tern_true
+    PROBE_5      FIRED   mkExample_RL_process_data_L18_tern_false
+    PROBE_6      MISSED  mkExample_RL_process_data_L18_tern_true
+    PROBE_7      FIRED   mkExample_RL_process_data_L18_tern_false
+    PROBE_8      FIRED   mkExample_RL_process_data_L18_then
+    PROBE_9      FIRED   mkExample_RL_process_data_L18_then
+    PROBE_10     FIRED   mkExample_RL_process_data_L18_else
+    PROBE_11     FIRED   mkExample_RL_process_data_L18_then
+    PROBE_12     FIRED   mkExample_RL_process_data_L18_else
+    PROBE_13     FIRED   mkExample_RL_process_data_L18_then
+    PROBE_14     FIRED   mkExample_RL_process_data_L18_else
+-- Rules: 1 / 2 (50.0%) --
+    PROBE_15     FIRED   mkExample_RL_process_data_L18_RULE_FIRED
+    PROBE_16     MISSED  mkExample_RL_reset_on_max_L40_RULE_FIRED
+-- Methods: 2 / 2 (100.0%) --
+    PROBE_17     FIRED   mkExample_put_METHOD_FIRED
+    PROBE_18     FIRED   mkExample_get_METHOD_FIRED
+====================================================================================
+TOTAL   14 / 19 (73.7%)
+  Branches       11 / 15     (73.3%)
+  Rules           1 / 2      (50.0%)
+  Methods         2 / 2      (100.0%)
+```
+
+Reading this: the testbench never held `valid`/`counter` long enough
+for `counter` to reach 100, so `reset_on_max` never fires (`isEmpty`
+isn't instrumented as a method here since it has no side effects —
+only `Action`/`ActionValue` methods get `METHOD_FIRED` probes). Several
+`tern_true` branches in `process_data` are also missed, because each
+`put`/`get` pair is spaced far enough apart that the rule re-fires
+multiple times per test step, cycling the ternary condition through
+values beyond the one branch the test intended to isolate. This is
+exactly the kind of gap the report is meant to surface — see the
+[Notes and Limitations](#notes-and-limitations) section for tightening
+the testbench to get 1:1 branch isolation.
+
+> The exact probe numbers/labels above will differ slightly depending
+> on your bsc version and source line numbers, but the shape of the
+> report — Branches / Rules / Methods, each with counts and a
+> percentage — is the same for any design.
+
 That's it — you now have a full Branch / Rule / Method coverage report
 for the example design. Apply the same five steps to your own `.bsv`
 sources to get coverage for a real project.
